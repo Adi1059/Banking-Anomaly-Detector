@@ -192,4 +192,4 @@ No changes to the detector, the alert model, or any other existing rule are requ
 
 ## License
 
-This is an academic project (Project-Based Learning, DSCPP-III) submitted for the 2026–27 session at Graphic Era (Deemed to be University). License terms to be added per department/institution policy.
+This is an academic project (Project-Based Learning, DSCPP-III) submitted for the 2026–27 session at Graphic Era (Deemed to be University). License terms to be added per department/institution policy
