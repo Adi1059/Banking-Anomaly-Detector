@@ -37,7 +37,7 @@ Most existing solutions force a trade-off:
 - **Rule engines** are fast and explainable, but rigid — adding a rule usually means editing core logic.
 - **ML-based systems** catch subtler patterns, but need large labeled datasets and can't justify their decisions to an auditor.
 
-This project takes a **hybrid, explainable-first approach**: a configurable rule engine as the auditable core, extended with graph-based cross-account analysis and a lightweight feedback loop — without ever becoming a black box.
+This project takes a **hybrid, explainable-first approach**: a configurable rule engine as the auditable core, extended with graph-based cross-account analysis and a lightweight feedback loop — without ever becoming a black box
 
 ---
 
