@@ -1,4 +1,8 @@
 __pycache__/
 *.pyc
-data/flagged_transactions.csv
-data/scored_transactions.csv
+*.o
+*.exe
+cpp/detector
+cpp/test_core
+**/scored_transactions.csv
+**/flagged_transactions.csv
