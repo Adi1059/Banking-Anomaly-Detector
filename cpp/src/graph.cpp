@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
+#include "unionfind.hpp"
 
 bool GraphDetector::eligible(const Transaction& t) {
     return t.sender != t.receiver && t.receiver.rfind("MRC", 0) != 0;
@@ -14,6 +15,29 @@ void GraphDetector::detect(const std::vector<Transaction>& tx, std::vector<Signa
         if (fo[i])  sig[i].hitGraph("graph: fan out", 0.70);
         if (fi[i])  sig[i].hitGraph("graph: fan in", 0.70);
     }
+    std::vector<char> any(tx.size(), 0);
+    for (size_t i = 0; i < tx.size(); ++i) any[i] = cyc[i] || fo[i] || fi[i];
+    const auto sizes = clusterSizes(tx, any);
+    for (size_t i = 0; i < tx.size(); ++i)
+        if (sizes[i] >= clusterMin_) sig[i].hitGraph("graph: linked cluster of " + std::to_string(sizes[i]) + " accounts", 0.30);
+}
+
+// Accounts joined by flagged transfers on the same calendar day form one cluster (Union-Find per day).
+std::vector<size_t> GraphDetector::clusterSizes(const std::vector<Transaction>& tx, const std::vector<char>& flagged) const {
+    std::unordered_map<int64_t, std::vector<size_t>> byDay;          // hash map: day -> flagged tx indices
+    for (size_t i = 0; i < tx.size(); ++i)
+        if (flagged[i]) byDay[tx[i].ts / 86400].push_back(i);
+
+    std::vector<size_t> out(tx.size(), 0);
+    for (const auto& kv : byDay) {
+        std::unordered_map<std::string, size_t> id;                  // account -> dense id
+        auto idOf = [&](const std::string& a) { return id.emplace(a, id.size()).first->second; };
+        for (size_t i : kv.second) { idOf(tx[i].sender); idOf(tx[i].receiver); }
+        UnionFind uf(id.size());
+        for (size_t i : kv.second) uf.unite(id[tx[i].sender], id[tx[i].receiver]);
+        for (size_t i : kv.second) out[i] = uf.sizeOf(id[tx[i].sender]);
+    }
+    return out;
 }
 
 // Depth-first search along time-ordered edges that returns to the starting account.

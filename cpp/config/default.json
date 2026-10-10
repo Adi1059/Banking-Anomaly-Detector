@@ -1,0 +1,17 @@
+{
+  "amount_threshold": 3.5,
+  "amount_min_history": 5,
+  "repeated_window_sec": 600,
+  "repeated_min": 3,
+  "odd_start_hour": 0,
+  "odd_end_hour": 5,
+  "velocity_window_sec": 600,
+  "velocity_max": 6,
+  "new_payee_multiplier": 5.0,
+  "new_payee_min_history": 5,
+  "structuring_limit": 10000,
+  "structuring_band": 0.9,
+  "structuring_min": 3,
+  "structuring_window_sec": 86400,
+  "cluster_min_accounts": 4
+}

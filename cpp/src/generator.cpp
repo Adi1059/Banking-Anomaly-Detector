@@ -62,9 +62,9 @@ std::vector<Transaction> TransactionGenerator::generate() const {
     };
 
     // ---- injected anomalies ----
-    const char* kinds[] = {"amount_spike", "repeated", "odd_hour", "ring", "fan_out", "fan_in"};
+    const char* kinds[] = {"amount_spike", "repeated", "odd_hour", "ring", "fan_out", "fan_in", "velocity", "new_payee", "structuring"};
     for (int g = 0; g < cfg_.anomalyGroups; ++g) {
-        const std::string kind = kinds[g % 6];
+        const std::string kind = kinds[g % 9];
         const int64_t ts = start + rint(1, cfg_.days - 2) * 86400LL + rint(9, 19) * 3600 + rint(0, 59) * 60;
         const std::string a = acc(rint(1, cfg_.accounts)), m = mrc(rint(0, merchants - 1));
 
@@ -97,6 +97,16 @@ std::vector<Transaction> TransactionGenerator::generate() const {
             const auto ts2 = distinctOthers(rint(8, 12), ai);
             for (size_t j = 0; j < ts2.size(); ++j)
                 tx.push_back(make(a, acc(ts2[j]), ts + 240 * static_cast<int64_t>(j), round2(uni(300, 900)), "Transfer", true, kind));
+        } else if (kind == "velocity") {
+            for (int k = 0, n = rint(8, 12); k < n; ++k)
+                tx.push_back(make(a, mrc(rint(0, merchants - 1)), ts + 45 * k, round2(uni(10, 60)), "Online Shop", true, kind));
+        } else if (kind == "new_payee") {
+            const int ai = std::stoi(a.substr(3));
+            const auto other = distinctOthers(1, ai);
+            tx.push_back(make(a, acc(other[0]), ts, round2(medianOf(a) * uni(6, 12)), "Transfer", true, kind));
+        } else if (kind == "structuring") {
+            for (int k = 0, n = rint(3, 5); k < n; ++k)
+                tx.push_back(make(a, m, ts + 7200 * k, round2(uni(9000, 9900)), "Transfer", true, kind));
         } else {  // fan_in
             const int ai = std::stoi(a.substr(3));
             const auto ss = distinctOthers(rint(8, 12), ai);

@@ -1,7 +1,8 @@
 // Banking Anomaly Detector - hybrid (rules + graph + ML) in C++17.
-//   detector generate [out.csv]            create synthetic labelled data
-//   detector detect [in.csv] [out.csv]     score transactions, print report
-//   detector                               generate + detect with default paths
+//   detector generate [out.csv|json]              create synthetic labelled data
+//   detector detect [in] [out] [--config f.json]  score transactions, print report (CSV or JSON by extension)
+//   detector sql [in] [out.sql]                   export transactions + alerts as a MySQL script
+//   detector                                      generate + detect with default paths
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -9,6 +10,7 @@
 #include <map>
 #include <queue>
 #include <string>
+#include "config.hpp"
 #include "eval.hpp"
 #include "generator.hpp"
 #include "io.hpp"
@@ -24,7 +26,7 @@ static void ensureParent(const std::string& path) {
 static int doGenerate(const std::string& out) {
     ensureParent(out);
     auto tx = TransactionGenerator().generate();
-    if (!writeTransactions(out, tx)) { std::cerr << "cannot write " << out << "\n"; return 1; }
+    if (!saveAny(out, tx)) { std::cerr << "cannot write " << out << "\n"; return 1; }
     size_t inj = 0;
     for (const auto& t : tx) inj += t.injected;
     std::cout << "Wrote " << tx.size() << " transactions (" << inj << " injected anomalous) to " << out << "\n";
@@ -36,16 +38,23 @@ static void printMethod(const char* name, const Metrics& m) {
               << std::setw(11) << m.precision << std::setw(9) << m.recall << std::setw(7) << m.f1 << "\n";
 }
 
-static int doDetect(const std::string& in, const std::string& out) {
+static int doDetect(const std::string& in, const std::string& out, const std::string& cfgPath = "") {
     std::vector<Transaction> tx;
-    if (!readTransactions(in, tx)) { std::cerr << "cannot read " << in << " (run 'detector generate' first)\n"; return 1; }
+    DetectorConfig cfg;
+    if (!cfgPath.empty()) {
+        std::string warn;
+        if (!cfg.load(cfgPath, &warn)) { std::cerr << "cannot load config " << cfgPath << " " << warn << "\n"; return 1; }
+        if (!warn.empty()) std::cerr << warn;
+        std::cout << "Config loaded from " << cfgPath << "\n";
+    }
+    if (!loadAny(in, tx)) { std::cerr << "cannot read " << in << " (run 'detector generate' first)\n"; return 1; }
     HybridScorer scorer;
     const auto t0 = std::chrono::steady_clock::now();
-    const auto sig = runPipeline(tx, scorer);
+    const auto sig = runPipeline(tx, scorer, cfg);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     ensureParent(out);
-    writeScored(out, tx, sig, scorer.config().alert);
+    saveScoredAny(out, tx, sig, scorer.config().alert);
 
     std::map<std::string, int> levels;
     std::vector<char> rules(tx.size()), graph(tx.size()), ml(tx.size()), hybrid(tx.size());
@@ -97,16 +106,40 @@ static int doDetect(const std::string& in, const std::string& out) {
     return 0;
 }
 
+static int doSql(const std::string& in, const std::string& out) {
+    std::vector<Transaction> tx;
+    if (!loadAny(in, tx)) { std::cerr << "cannot read " << in << "\n"; return 1; }
+    HybridScorer scorer;
+    const auto sig = runPipeline(tx, scorer);
+    ensureParent(out);
+    if (!writeSqlScript(out, tx, sig, scorer.config().alert)) { std::cerr << "cannot write " << out << "\n"; return 1; }
+    std::cout << "MySQL script written to " << out << " (run sql/schema.sql first)\n";
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    // optional "--config file.json" anywhere on the command line
+    std::string cfgPath;
+    std::vector<std::string> args;
+    for (int i = 0; i < argc; ++i) {
+        if (std::string(argv[i]) == "--config" && i + 1 < argc) cfgPath = argv[++i];
+        else args.push_back(argv[i]);
+    }
+    argc = static_cast<int>(args.size());
+    std::vector<char*> av;
+    for (auto& a : args) av.push_back(&a[0]);
+    argv = av.data();
     const std::string cmd = argc > 1 ? argv[1] : "demo";
     if (cmd == "generate") return doGenerate(argc > 2 ? argv[2] : "data/demo_transactions.csv");
     if (cmd == "detect")
-        return doDetect(argc > 2 ? argv[2] : "data/demo_transactions.csv", argc > 3 ? argv[3] : "data/scored_transactions.csv");
+        return doDetect(argc > 2 ? argv[2] : "data/demo_transactions.csv", argc > 3 ? argv[3] : "data/scored_transactions.csv", cfgPath);
+    if (cmd == "sql")
+        return doSql(argc > 2 ? argv[2] : "data/demo_transactions.csv", argc > 3 ? argv[3] : "data/load_alerts.sql");
     if (cmd == "demo") {
         if (int rc = doGenerate("data/demo_transactions.csv")) return rc;
         std::cout << "\n";
-        return doDetect("data/demo_transactions.csv", "data/scored_transactions.csv");
+        return doDetect("data/demo_transactions.csv", "data/scored_transactions.csv", cfgPath);
     }
-    std::cerr << "usage: detector [generate [out] | detect [in] [out] | demo]\n";
+    std::cerr << "usage: detector [generate [out] | detect [in] [out] [--config f.json] | sql [in] [out.sql] | demo]\n";
     return 2;
 }

@@ -1,6 +1,6 @@
 #pragma once
 // Synthetic transaction generator: normal behaviour + labelled injected anomalies
-// (amount spike, repeated, odd hour, ring/cycle, fan-out, fan-in).
+// (amount spike, repeated, odd hour, ring/cycle, fan-out, fan-in, velocity, new payee, structuring).
 #include <vector>
 #include "types.hpp"
 
@@ -8,7 +8,7 @@ struct GeneratorConfig {
     int accounts = 60;
     int days = 30;
     double avgPerDay = 2.0;
-    int anomalyGroups = 30;
+    int anomalyGroups = 45;
     unsigned seed = 42;
 };
 

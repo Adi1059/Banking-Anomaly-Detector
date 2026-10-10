@@ -10,13 +10,16 @@
 
 class GraphDetector {
 public:
-    GraphDetector(int64_t windowSec = 7200, size_t maxCycleLen = 4, double amountTolerance = 0.25, size_t fanThreshold = 6)
-        : windowSec_(windowSec), maxCycleLen_(maxCycleLen), tol_(amountTolerance), fanThreshold_(fanThreshold) {}
+    GraphDetector(int64_t windowSec = 7200, size_t maxCycleLen = 4, double amountTolerance = 0.25, size_t fanThreshold = 6,
+                  size_t clusterMin = 4)
+        : windowSec_(windowSec), maxCycleLen_(maxCycleLen), tol_(amountTolerance), fanThreshold_(fanThreshold), clusterMin_(clusterMin) {}
 
     void detect(const std::vector<Transaction>& tx, std::vector<Signals>& sig) const;
 
     std::vector<char> findCycles(const std::vector<Transaction>& tx) const;
     std::vector<char> findFan(const std::vector<Transaction>& tx, bool bySender) const;
+    // Union-Find over flagged transfers: returns, per transaction, the number of accounts in its cluster (0 if not flagged).
+    std::vector<size_t> clusterSizes(const std::vector<Transaction>& tx, const std::vector<char>& flagged) const;
 
 private:
     static bool eligible(const Transaction& t);
@@ -24,4 +27,5 @@ private:
     size_t maxCycleLen_;
     double tol_;
     size_t fanThreshold_;
+    size_t clusterMin_;
 };
