@@ -1,5 +1,5 @@
 CXX      ?= g++
-CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Iinclude
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Iinclude -pthread
 LIB_SRC  := src/rules.cpp src/graph.cpp src/ml.cpp src/scorer.cpp src/generator.cpp src/io.cpp src/json_io.cpp src/sql_export.cpp src/config.cpp src/pipeline.cpp
 
 all: detector

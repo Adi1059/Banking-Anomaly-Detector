@@ -21,7 +21,7 @@ static Transaction T(const char* s, const char* r, const char* when, double amt)
 }
 
 static void testTime() {
-    int64_t ts; parseTime("2026-03-05 14:07:09", ts);
+    int64_t ts = 0; parseTime("2026-03-05 14:07:09", ts);
     CHECK(formatTime(ts) == "2026-03-05 14:07:09");
 }
 

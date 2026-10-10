@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <future>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -164,6 +165,17 @@ RuleEngine RuleEngine::fromConfig(const DetectorConfig& c) {
     return e;
 }
 
+// Every rule's detect() is const and reads only the shared, immutable transaction list, so the rules run
+// concurrently (one std::async task each). Results are applied afterwards on one thread in a fixed order,
+// which keeps the output deterministic and avoids any lock on 'sig'.
 void RuleEngine::run(const std::vector<Transaction>& tx, std::vector<Signals>& sig) const {
-    for (const auto& r : rules_) r->apply(tx, sig);   // dynamic dispatch
+    std::vector<std::future<std::vector<char>>> jobs;
+    jobs.reserve(rules_.size());
+    for (const auto& r : rules_)
+        jobs.push_back(std::async(std::launch::async, [&r, &tx] { return r->detect(tx); }));   // dynamic dispatch on worker threads
+    for (size_t k = 0; k < rules_.size(); ++k) {
+        const std::vector<char> flags = jobs[k].get();                                          // join
+        for (size_t i = 0; i < flags.size(); ++i)
+            if (flags[i]) sig[i].hitRule(rules_[k]->name(), rules_[k]->weight());
+    }
 }

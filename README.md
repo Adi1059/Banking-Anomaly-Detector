@@ -56,6 +56,7 @@ Persistence: `sql/schema.sql` (accounts, transactions, alerts, ranked-alerts vie
 |---|---|
 | Deque (`std::deque`) | velocity and structuring sliding windows |
 | Union-Find (path halving + union by size) | `UnionFind`, account clusters in `GraphDetector` |
+| Threads (`std::async`, `-pthread`) | `RuleEngine::run` evaluates all rules concurrently, results applied in order (deterministic) |
 | Hash map (`unordered_map`) | per-account statistics, group-by (account, amount), distinct-counterparty counts |
 | Sliding window / two pointers | repeated-transaction rule, fan-in / fan-out, hourly velocity features |
 | Graph as adjacency list + DFS (explicit stack) | cycle detection A->B->C->A with time and amount constraints |
