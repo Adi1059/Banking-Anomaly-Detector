@@ -1,6 +1,8 @@
 #include "rules.hpp"
 #include <algorithm>
 #include <cmath>
+#include <deque>
+#include <unordered_set>
 #include <unordered_map>
 
 namespace {
@@ -74,12 +76,91 @@ std::vector<char> OddHourRule::detect(const std::vector<Transaction>& tx) const 
     return flags;
 }
 
+// ---- Velocity (deque sliding window) -------------------------------------------
+std::vector<char> VelocityRule::detect(const std::vector<Transaction>& tx) const {
+    std::unordered_map<std::string, std::vector<size_t>> bySender;
+    for (size_t i = 0; i < tx.size(); ++i) bySender[tx[i].sender].push_back(i);
+
+    std::vector<char> flags(tx.size(), 0);
+    for (auto& kv : bySender) {
+        auto& idx = kv.second;
+        if (idx.size() < maxCount_) continue;
+        std::stable_sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return tx[a].ts < tx[b].ts; });
+        std::deque<size_t> window;                                   // transactions inside the time window
+        for (size_t i : idx) {
+            window.push_back(i);
+            while (tx[i].ts - tx[window.front()].ts > windowSec_) window.pop_front();
+            if (window.size() >= maxCount_)
+                for (size_t k : window) flags[k] = 1;
+        }
+    }
+    return flags;
+}
+
+// ---- Large transfer to a new payee ---------------------------------------------
+std::vector<char> NewPayeeLargeTransferRule::detect(const std::vector<Transaction>& tx) const {
+    std::unordered_map<std::string, std::vector<double>> amounts;     // account -> amounts (for the median)
+    for (const auto& t : tx) amounts[t.sender].push_back(t.amount);
+    std::unordered_map<std::string, double> median;
+    for (const auto& kv : amounts) median[kv.first] = medianOf(kv.second);
+
+    std::vector<size_t> order(tx.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return tx[a].ts < tx[b].ts; });
+
+    std::unordered_set<std::string> seen;                             // hash set of (sender, receiver) pairs
+    std::vector<char> flags(tx.size(), 0);
+    for (size_t i : order) {
+        const Transaction& t = tx[i];
+        const bool isNew = seen.insert(t.sender + "|" + t.receiver).second;
+        if (isNew && t.sender != t.receiver && amounts[t.sender].size() >= minHistory_ && t.amount >= mult_ * median[t.sender])
+            flags[i] = 1;
+    }
+    return flags;
+}
+
+// ---- Structuring (deque sliding window over amounts just under the limit) --------
+std::vector<char> StructuringRule::detect(const std::vector<Transaction>& tx) const {
+    std::unordered_map<std::string, std::vector<size_t>> bySender;
+    for (size_t i = 0; i < tx.size(); ++i)
+        if (tx[i].amount >= band_ * limit_ && tx[i].amount < limit_) bySender[tx[i].sender].push_back(i);
+
+    std::vector<char> flags(tx.size(), 0);
+    for (auto& kv : bySender) {
+        auto& idx = kv.second;
+        if (idx.size() < minCount_) continue;
+        std::stable_sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return tx[a].ts < tx[b].ts; });
+        std::deque<size_t> window;
+        for (size_t i : idx) {
+            window.push_back(i);
+            while (tx[i].ts - tx[window.front()].ts > windowSec_) window.pop_front();
+            if (window.size() >= minCount_)
+                for (size_t k : window) flags[k] = 1;
+        }
+    }
+    return flags;
+}
+
 // ---- Engine -----------------------------------------------------------------
 RuleEngine RuleEngine::withDefaultRules() {
     RuleEngine e;
     e.add(std::make_unique<AmountSpikeRule>());
     e.add(std::make_unique<RepeatedTransactionRule>());
     e.add(std::make_unique<OddHourRule>());
+    e.add(std::make_unique<VelocityRule>());
+    e.add(std::make_unique<NewPayeeLargeTransferRule>());
+    e.add(std::make_unique<StructuringRule>());
+    return e;
+}
+
+RuleEngine RuleEngine::fromConfig(const DetectorConfig& c) {
+    RuleEngine e;
+    e.add(std::make_unique<AmountSpikeRule>(c.amountThreshold, c.amountMinHistory));
+    e.add(std::make_unique<RepeatedTransactionRule>(c.repeatedWindow, c.repeatedMin));
+    e.add(std::make_unique<OddHourRule>(c.oddStart, c.oddEnd));
+    e.add(std::make_unique<VelocityRule>(c.velocityWindow, c.velocityMax));
+    e.add(std::make_unique<NewPayeeLargeTransferRule>(c.newPayeeMult, c.newPayeeMinHistory));
+    e.add(std::make_unique<StructuringRule>(c.structLimit, c.structBand, c.structMin, c.structWindow));
     return e;
 }
 

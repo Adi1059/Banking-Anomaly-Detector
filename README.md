@@ -1,7 +1,7 @@
 # Banking Anomaly Detector (C++17)
 
 Hybrid transaction anomaly detection for banking data, built for an **OOP + Data Structures** course project.
-Three independent detectors - **rules**, **graph analysis** and **machine learning** - are fused into one
+Three independent detectors - **rules** (six configurable rules), **graph analysis** and **machine learning** - are fused into one
 explainable risk score.
 
 ```
@@ -22,8 +22,26 @@ build.bat
 detector.exe
 test_core.exe
 ```
-Other commands: `detector generate [out.csv]`, `detector detect [in.csv] [out.csv]` (works on your own CSV with
-columns `account_id, receiver_id, timestamp, amount`).
+Other commands (CSV or JSON is chosen from the file extension):
+```bash
+detector generate data/demo_transactions.json
+detector detect data/demo_transactions.csv data/scored.json --config config/default.json
+detector sql data/demo_transactions.csv data/load_alerts.sql     # then: mysql < sql/schema.sql ; mysql < data/load_alerts.sql
+```
+`detect` also works on your own file with columns `account_id, receiver_id, timestamp, amount`.
+
+## Rules (all thresholds in `config/default.json`)
+| Rule | Idea | Data structure |
+|---|---|---|
+| Amount spike | robust z-score (median / MAD) per account | hash map |
+| Repeated transaction | same amount repeated in a short window | hash map + two pointers |
+| Odd hour | activity between 00:00 and 05:00 | - |
+| High velocity | >= 6 transactions by one account in 10 min | deque sliding window |
+| Large transfer to new payee | first payment to a receiver, >= 5x the account median | hash set + hash map |
+| Structuring | >= 3 payments in [90%, 100%) of the 10,000 limit within 24 h | deque sliding window |
+
+Graph module: DFS cycle detection, fan-in / fan-out windows, and **Union-Find** clusters of accounts linked by flagged transfers on the same day.
+Persistence: `sql/schema.sql` (accounts, transactions, alerts, ranked-alerts view) and `sql/queries.sql`; `detector sql` exports a MySQL load script.
 
 ## OOP concepts used
 | Concept | Where |
@@ -36,6 +54,8 @@ columns `account_id, receiver_id, timestamp, amount`).
 ## Data structures and algorithms used
 | Structure / algorithm | Where |
 |---|---|
+| Deque (`std::deque`) | velocity and structuring sliding windows |
+| Union-Find (path halving + union by size) | `UnionFind`, account clusters in `GraphDetector` |
 | Hash map (`unordered_map`) | per-account statistics, group-by (account, amount), distinct-counterparty counts |
 | Sliding window / two pointers | repeated-transaction rule, fan-in / fan-out, hourly velocity features |
 | Graph as adjacency list + DFS (explicit stack) | cycle detection A->B->C->A with time and amount constraints |
@@ -47,15 +67,15 @@ columns `account_id, receiver_id, timestamp, amount`).
 `risk = 1 - (1 - a*rule)(1 - b*graph)(1 - c*ml)` with rule/graph scores combined by noisy-OR.
 One weak signal stays LOW; a strong signal or agreement between detectors becomes an alert (risk >= 0.5).
 
-## Sample result (synthetic data, 3,779 transactions, 145 injected anomalies)
+## Sample result (synthetic data, 3,850 transactions, 216 injected anomalies, 9 anomaly types)
 | Method | Precision | Recall | F1 |
 |---|---|---|---|
-| Rules only | 0.71 | 0.95 | 0.81 |
-| Graph only | 0.97 | 0.79 | 0.87 |
-| ML only | 0.96 | 0.55 | 0.70 |
-| Hybrid | 0.94 | 0.99 | 0.96 |
+| Rules only | 0.78 | 0.93 | 0.85 |
+| Graph only | 1.00 | 0.49 | 0.66 |
+| ML only | 0.98 | 0.56 | 0.71 |
+| Hybrid | 0.98 | 0.99 | 0.98 |
 
-The data is synthetic and the thresholds were tuned on it, so real-world numbers would be lower.
+Runtime: about 75,000 transactions in 0.85 s. The data is synthetic and the thresholds were tuned on it, so real-world numbers would be lower.
 
 ## Roadmap
-Dashboard, more rules, real datasets (PaySim), parallel processing.
+Live MySQL connector (C API), alert dashboard, Observer-style alert publishers, real datasets (PaySim), parallel processing, Big-O write-up.
