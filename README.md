@@ -1,4 +1,4 @@
-# Banking Anomaly Detector (C++17)
+# Banking Anomaly Detector (C++,C & Python)
 
 Hybrid transaction anomaly detection for banking data, built for an **OOP + Data Structures** course project.
 Three independent detectors - **rules** (six configurable rules), **graph analysis** and **machine learning** - are fused into one
