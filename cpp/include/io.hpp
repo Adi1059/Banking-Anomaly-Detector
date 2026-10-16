@@ -1,22 +1,17 @@
 #pragma once
+// ============================================================
+// io.hpp  –  Simple CSV loading and saving
+// ============================================================
+
 #include <string>
 #include <vector>
 #include "types.hpp"
 
-// CSV (columns: tx_id, account_id, receiver_id, timestamp, amount, merchant, is_injected_anomaly, anomaly_type)
-bool writeTransactions(const std::string& path, const std::vector<Transaction>& tx);
-bool readTransactions(const std::string& path, std::vector<Transaction>& tx);
-bool writeScored(const std::string& path, const std::vector<Transaction>& tx, const std::vector<Signals>& sig, double alertThreshold);
+// Load transactions from a CSV file
+// Expected columns: id,sender,receiver,amount,timestamp
+bool loadCSV(const std::string& path, std::vector<Transaction>& out);
 
-// JSON (array of objects with the same field names as the CSV columns)
-bool writeTransactionsJson(const std::string& path, const std::vector<Transaction>& tx);
-bool readTransactionsJson(const std::string& path, std::vector<Transaction>& tx);
-bool writeScoredJson(const std::string& path, const std::vector<Transaction>& tx, const std::vector<Signals>& sig, double alertThreshold);
-
-// Format chosen from the file extension (.json -> JSON, anything else -> CSV)
-bool loadAny(const std::string& path, std::vector<Transaction>& tx);
-bool saveAny(const std::string& path, const std::vector<Transaction>& tx);
-bool saveScoredAny(const std::string& path, const std::vector<Transaction>& tx, const std::vector<Signals>& sig, double alertThreshold);
-
-// MySQL: INSERT script for sql/schema.sql (tables accounts, transactions, alerts)
-bool writeSqlScript(const std::string& path, const std::vector<Transaction>& tx, const std::vector<Signals>& sig, double alertThreshold);
+// Save scored results
+bool saveScoredCSV(const std::string& path,
+                   const std::vector<Transaction>& tx,
+                   const std::vector<Signals>& signals);

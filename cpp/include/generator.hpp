@@ -1,21 +1,17 @@
 #pragma once
-// Synthetic transaction generator: normal behaviour + labelled injected anomalies
-// (amount spike, repeated, odd hour, ring/cycle, fan-out, fan-in, velocity, new payee, structuring).
+// ============================================================
+// generator.hpp  –  Synthetic transaction data generator
+// ============================================================
+// Creates realistic-looking transactions + injects known anomalies
+// so we can evaluate precision / recall.
+// ============================================================
+
 #include <vector>
 #include "types.hpp"
 
-struct GeneratorConfig {
-    int accounts = 60;
-    int days = 30;
-    double avgPerDay = 2.0;
-    int anomalyGroups = 45;
-    unsigned seed = 42;
-};
-
 class TransactionGenerator {
 public:
-    explicit TransactionGenerator(GeneratorConfig cfg = GeneratorConfig()) : cfg_(cfg) {}
-    std::vector<Transaction> generate() const;
-private:
-    GeneratorConfig cfg_;
+    // Generate a dataset of the given size
+    // (approximately 5-6% of transactions will be anomalous)
+    std::vector<Transaction> generate(int numTransactions = 4000) const;
 };

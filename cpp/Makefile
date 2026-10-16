@@ -1,20 +1,37 @@
-CXX      ?= g++
-CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Iinclude -pthread
-LIB_SRC  := src/rules.cpp src/graph.cpp src/ml.cpp src/scorer.cpp src/generator.cpp src/io.cpp src/json_io.cpp src/sql_export.cpp src/config.cpp src/pipeline.cpp
+# ============================================================
+# Makefile for Banking Anomaly Detector (PBL)
+# ============================================================
 
-all: detector
+CXX      := g++
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -Iinclude
+LDFLAGS  :=
 
-detector: $(LIB_SRC) src/main.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@
+SRC := src/main.cpp \
+       src/rules.cpp \
+       src/graph.cpp \
+       src/scorer.cpp \
+       src/generator.cpp \
+       src/io.cpp
 
-test_core: $(LIB_SRC) tests/test_core.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@
+OBJ := $(SRC:.cpp=.o)
+TARGET := detector
 
-test: test_core
-	./test_core
+.PHONY: all clean run
 
-run: detector
-	./detector
+all: $(TARGET)
+
+$(TARGET): $(OBJ)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo ""
+	@echo "Build successful → ./detector"
+	@echo "Run with:  ./detector"
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f detector test_core detector.exe test_core.exe
+	rm -f $(OBJ) $(TARGET)
+	rm -f data/*.csv
+
+run: $(TARGET)
+	./detector
