@@ -1,0 +1,20 @@
+{
+  "rules": {
+    "amount_spike_threshold": 3.5,
+    "velocity_window_sec": 600,
+    "velocity_max_count": 6,
+    "structuring_limit": 10000,
+    "odd_hour_start": 0,
+    "odd_hour_end": 5
+  },
+  "graph": {
+    "window_sec": 7200,
+    "max_cycle_length": 4,
+    "fan_threshold": 6
+  },
+  "scoring": {
+    "rule_weight": 0.60,
+    "graph_weight": 0.40,
+    "alert_threshold": 0.50
+  }
+}

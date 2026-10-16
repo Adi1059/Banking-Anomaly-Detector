@@ -1,0 +1,23 @@
+# Build artifacts
+*.o
+*.obj
+*.exe
+cpp/detector
+cpp/detector.exe
+
+# Generated data
+cpp/data/*.csv
+**/scored_*.csv
+**/demo_*.csv
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python (if any)
+__pycache__/
+*.pyc
+.venv/
