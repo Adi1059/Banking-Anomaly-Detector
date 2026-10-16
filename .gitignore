@@ -1,8 +1,23 @@
-__pycache__/
-*.pyc
+# Build artifacts
 *.o
+*.obj
 *.exe
 cpp/detector
-cpp/test_core
-**/scored_transactions.csv
-**/flagged_transactions.csv
+cpp/detector.exe
+
+# Generated data
+cpp/data/*.csv
+**/scored_*.csv
+**/demo_*.csv
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python (if any)
+__pycache__/
+*.pyc
+.venv/

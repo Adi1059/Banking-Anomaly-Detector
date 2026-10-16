@@ -1,181 +1,230 @@
+// ============================================================
+// rules.cpp  –  Implementation of all detection rules
+// ============================================================
+
 #include "rules.hpp"
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <deque>
-#include <future>
-#include <unordered_set>
+#include <map>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
-namespace {
-double medianOf(std::vector<double> v) {
-    if (v.empty()) return 0.0;
-    std::sort(v.begin(), v.end());
-    const size_t n = v.size();
-    return n % 2 ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) / 2.0;
-}
-}  // namespace
-
-void Rule::apply(const std::vector<Transaction>& tx, std::vector<Signals>& sig) const {
-    const std::vector<char> flags = detect(tx);
-    for (size_t i = 0; i < flags.size(); ++i)
-        if (flags[i]) sig[i].hitRule(name(), weight());
+// ------------------------------------------------------------
+// Helper: median of a vector
+// ------------------------------------------------------------
+static double median(std::vector<double> v) {
+  if (v.empty())
+    return 0.0;
+  std::sort(v.begin(), v.end());
+  size_t n = v.size();
+  return (n % 2 == 0) ? (v[n / 2 - 1] + v[n / 2]) / 2.0 : v[n / 2];
 }
 
-// ---- Amount spike -------------------------------------------------------
-std::vector<char> AmountSpikeRule::detect(const std::vector<Transaction>& tx) const {
-    std::unordered_map<std::string, std::vector<double>> byAccount;   // hash map: account -> amounts
-    for (const auto& t : tx) byAccount[t.sender].push_back(t.amount);
+// ------------------------------------------------------------
+// 1. Amount Spike (robust z-score using median + MAD)
+// ------------------------------------------------------------
+std::vector<bool>
+AmountSpikeRule::detect(const std::vector<Transaction> &tx) const {
+  std::vector<bool> flags(tx.size(), false);
 
-    struct Stat { double median, scale; size_t n; };
-    std::unordered_map<std::string, Stat> stats;
-    for (const auto& kv : byAccount) {
-        const double med = medianOf(kv.second);
-        std::vector<double> dev;
-        dev.reserve(kv.second.size());
-        for (double a : kv.second) dev.push_back(std::fabs(a - med));
-        const double mad = medianOf(dev);
-        const double scale = mad > 0 ? 1.4826 * mad : med * 0.1;      // fallback for constant spenders
-        stats[kv.first] = {med, std::max(scale, 1e-9), kv.second.size()};
+  // Group amounts by sender
+  std::unordered_map<std::string, std::vector<double>> history;
+  for (const auto &t : tx) {
+    history[t.sender].push_back(t.amount);
+  }
+
+  // Pre-compute median and MAD per account
+  std::unordered_map<std::string, double> med, mad;
+  for (auto &kv : history) {
+    double m = median(kv.second);
+    med[kv.first] = m;
+    std::vector<double> absDev;
+    for (double a : kv.second)
+      absDev.push_back(std::abs(a - m));
+    mad[kv.first] = median(absDev) * 1.4826; // consistency constant
+  }
+
+  for (size_t i = 0; i < tx.size(); ++i) {
+    const auto &t = tx[i];
+    double m = med[t.sender];
+    double md = mad[t.sender];
+    if (md < 1e-6)
+      continue; // not enough variation
+    double z = (t.amount - m) / md;
+    if (z >= threshold_)
+      flags[i] = true;
+  }
+  return flags;
+}
+
+// ------------------------------------------------------------
+// 2. Repeated Transaction (same amount, short window)
+// ------------------------------------------------------------
+std::vector<bool>
+RepeatedTransactionRule::detect(const std::vector<Transaction> &tx) const {
+  std::vector<bool> flags(tx.size(), false);
+
+  // Group by (sender, amount)
+  std::map<std::pair<std::string, long long>, std::vector<size_t>> groups;
+  for (size_t i = 0; i < tx.size(); ++i) {
+    long long keyAmt = static_cast<long long>(tx[i].amount * 100); // cents
+    groups[{tx[i].sender, keyAmt}].push_back(i);
+  }
+
+  for (auto &kv : groups) {
+    auto &indices = kv.second;
+    // Sliding window on timestamps
+    std::deque<size_t> window;
+    for (size_t idx : indices) {
+      while (!window.empty() &&
+             tx[idx].timestamp - tx[window.front()].timestamp > windowSec_) {
+        window.pop_front();
+      }
+      window.push_back(idx);
+      if ((int)window.size() >= minRepeats_) {
+        for (size_t j : window)
+          flags[j] = true;
+      }
     }
+  }
+  return flags;
+}
 
-    std::vector<char> flags(tx.size(), 0);
-    for (size_t i = 0; i < tx.size(); ++i) {
-        const Stat& s = stats[tx[i].sender];
-        flags[i] = s.n >= minHistory_ && (tx[i].amount - s.median) / s.scale > threshold_;
+// ------------------------------------------------------------
+// 3. Odd Hour
+// ------------------------------------------------------------
+std::vector<bool>
+OddHourRule::detect(const std::vector<Transaction> &tx) const {
+  std::vector<bool> flags(tx.size(), false);
+  for (size_t i = 0; i < tx.size(); ++i) {
+    // Convert Unix timestamp to hour (UTC)
+    time_t t = static_cast<time_t>(tx[i].timestamp);
+    struct tm *tm = gmtime(&t);
+    int hour = tm->tm_hour;
+    if (hour >= startHour_ && hour < endHour_) {
+      flags[i] = true;
     }
-    return flags;
+  }
+  return flags;
 }
 
-// ---- Repeated transaction (sliding window / two pointers) ---------------------
-std::vector<char> RepeatedTransactionRule::detect(const std::vector<Transaction>& tx) const {
-    std::unordered_map<std::string, std::vector<size_t>> groups;      // (account, amount) -> tx indices
-    for (size_t i = 0; i < tx.size(); ++i)
-        groups[tx[i].sender + "|" + std::to_string(std::llround(tx[i].amount * 100))].push_back(i);
+// ------------------------------------------------------------
+// 4. High Velocity (deque sliding window)
+// ------------------------------------------------------------
+std::vector<bool>
+VelocityRule::detect(const std::vector<Transaction> &tx) const {
+  std::vector<bool> flags(tx.size(), false);
 
-    std::vector<char> flags(tx.size(), 0);
-    for (auto& kv : groups) {
-        auto& idx = kv.second;
-        if (idx.size() < minRepeats_) continue;
-        std::stable_sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return tx[a].ts < tx[b].ts; });
-        size_t left = 0;
-        for (size_t right = 0; right < idx.size(); ++right) {
-            while (tx[idx[right]].ts - tx[idx[left]].ts > windowSec_) ++left;
-            if (right - left + 1 >= minRepeats_)
-                for (size_t k = left; k <= right; ++k) flags[idx[k]] = 1;
-        }
+  // Group indices by sender
+  std::unordered_map<std::string, std::vector<size_t>> bySender;
+  for (size_t i = 0; i < tx.size(); ++i) {
+    bySender[tx[i].sender].push_back(i);
+  }
+
+  for (auto &kv : bySender) {
+    auto &indices = kv.second;
+    std::deque<size_t> window;
+    for (size_t idx : indices) {
+      while (!window.empty() &&
+             tx[idx].timestamp - tx[window.front()].timestamp > windowSec_) {
+        window.pop_front();
+      }
+      window.push_back(idx);
+      if ((int)window.size() >= maxCount_) {
+        for (size_t j : window)
+          flags[j] = true;
+      }
     }
-    return flags;
+  }
+  return flags;
 }
 
-// ---- Odd hour ---------------------------------------------------------------
-std::vector<char> OddHourRule::detect(const std::vector<Transaction>& tx) const {
-    std::vector<char> flags(tx.size(), 0);
-    for (size_t i = 0; i < tx.size(); ++i) {
-        const int hour = static_cast<int>((tx[i].ts % 86400) / 3600);
-        flags[i] = (start_ <= end_) ? (hour >= start_ && hour < end_) : (hour >= start_ || hour < end_);
+// ------------------------------------------------------------
+// 5. Large transfer to a brand-new payee
+// ------------------------------------------------------------
+std::vector<bool>
+NewPayeeRule::detect(const std::vector<Transaction> &tx) const {
+  std::vector<bool> flags(tx.size(), false);
+
+  std::unordered_map<std::string, std::unordered_set<std::string>> seenPayees;
+  std::unordered_map<std::string, std::vector<double>> amounts;
+
+  // First pass: collect history
+  for (const auto &t : tx) {
+    amounts[t.sender].push_back(t.amount);
+  }
+  std::unordered_map<std::string, double> medAmt;
+  for (auto &kv : amounts) {
+    medAmt[kv.first] = median(kv.second);
+  }
+
+  // Second pass: detect
+  for (size_t i = 0; i < tx.size(); ++i) {
+    const auto &t = tx[i];
+    bool isNew = seenPayees[t.sender].count(t.receiver) == 0;
+    seenPayees[t.sender].insert(t.receiver);
+
+    if (isNew && medAmt[t.sender] > 0 && t.amount >= mult_ * medAmt[t.sender]) {
+      flags[i] = true;
     }
-    return flags;
+  }
+  return flags;
 }
 
-// ---- Velocity (deque sliding window) -------------------------------------------
-std::vector<char> VelocityRule::detect(const std::vector<Transaction>& tx) const {
-    std::unordered_map<std::string, std::vector<size_t>> bySender;
-    for (size_t i = 0; i < tx.size(); ++i) bySender[tx[i].sender].push_back(i);
+// ------------------------------------------------------------
+// 6. Structuring (smurfing)
+// ------------------------------------------------------------
+std::vector<bool>
+StructuringRule::detect(const std::vector<Transaction> &tx) const {
+  std::vector<bool> flags(tx.size(), false);
+  double low = limit_ * band_;
 
-    std::vector<char> flags(tx.size(), 0);
-    for (auto& kv : bySender) {
-        auto& idx = kv.second;
-        if (idx.size() < maxCount_) continue;
-        std::stable_sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return tx[a].ts < tx[b].ts; });
-        std::deque<size_t> window;                                   // transactions inside the time window
-        for (size_t i : idx) {
-            window.push_back(i);
-            while (tx[i].ts - tx[window.front()].ts > windowSec_) window.pop_front();
-            if (window.size() >= maxCount_)
-                for (size_t k : window) flags[k] = 1;
-        }
+  std::unordered_map<std::string, std::vector<size_t>> bySender;
+  for (size_t i = 0; i < tx.size(); ++i) {
+    if (tx[i].amount >= low && tx[i].amount < limit_) {
+      bySender[tx[i].sender].push_back(i);
     }
-    return flags;
-}
+  }
 
-// ---- Large transfer to a new payee ---------------------------------------------
-std::vector<char> NewPayeeLargeTransferRule::detect(const std::vector<Transaction>& tx) const {
-    std::unordered_map<std::string, std::vector<double>> amounts;     // account -> amounts (for the median)
-    for (const auto& t : tx) amounts[t.sender].push_back(t.amount);
-    std::unordered_map<std::string, double> median;
-    for (const auto& kv : amounts) median[kv.first] = medianOf(kv.second);
-
-    std::vector<size_t> order(tx.size());
-    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return tx[a].ts < tx[b].ts; });
-
-    std::unordered_set<std::string> seen;                             // hash set of (sender, receiver) pairs
-    std::vector<char> flags(tx.size(), 0);
-    for (size_t i : order) {
-        const Transaction& t = tx[i];
-        const bool isNew = seen.insert(t.sender + "|" + t.receiver).second;
-        if (isNew && t.sender != t.receiver && amounts[t.sender].size() >= minHistory_ && t.amount >= mult_ * median[t.sender])
-            flags[i] = 1;
+  for (auto &kv : bySender) {
+    auto &indices = kv.second;
+    std::deque<size_t> window;
+    for (size_t idx : indices) {
+      // 24-hour window
+      while (!window.empty() &&
+             tx[idx].timestamp - tx[window.front()].timestamp > 86400) {
+        window.pop_front();
+      }
+      window.push_back(idx);
+      if ((int)window.size() >= minCount_) {
+        for (size_t j : window)
+          flags[j] = true;
+      }
     }
-    return flags;
+  }
+  return flags;
 }
 
-// ---- Structuring (deque sliding window over amounts just under the limit) --------
-std::vector<char> StructuringRule::detect(const std::vector<Transaction>& tx) const {
-    std::unordered_map<std::string, std::vector<size_t>> bySender;
-    for (size_t i = 0; i < tx.size(); ++i)
-        if (tx[i].amount >= band_ * limit_ && tx[i].amount < limit_) bySender[tx[i].sender].push_back(i);
-
-    std::vector<char> flags(tx.size(), 0);
-    for (auto& kv : bySender) {
-        auto& idx = kv.second;
-        if (idx.size() < minCount_) continue;
-        std::stable_sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return tx[a].ts < tx[b].ts; });
-        std::deque<size_t> window;
-        for (size_t i : idx) {
-            window.push_back(i);
-            while (tx[i].ts - tx[window.front()].ts > windowSec_) window.pop_front();
-            if (window.size() >= minCount_)
-                for (size_t k : window) flags[k] = 1;
-        }
-    }
-    return flags;
+// ------------------------------------------------------------
+// RuleEngine
+// ------------------------------------------------------------
+RuleEngine RuleEngine::createDefault() {
+  RuleEngine eng;
+  eng.add(std::make_unique<AmountSpikeRule>());
+  eng.add(std::make_unique<RepeatedTransactionRule>());
+  eng.add(std::make_unique<OddHourRule>());
+  eng.add(std::make_unique<VelocityRule>());
+  eng.add(std::make_unique<NewPayeeRule>());
+  eng.add(std::make_unique<StructuringRule>());
+  return eng;
 }
 
-// ---- Engine -----------------------------------------------------------------
-RuleEngine RuleEngine::withDefaultRules() {
-    RuleEngine e;
-    e.add(std::make_unique<AmountSpikeRule>());
-    e.add(std::make_unique<RepeatedTransactionRule>());
-    e.add(std::make_unique<OddHourRule>());
-    e.add(std::make_unique<VelocityRule>());
-    e.add(std::make_unique<NewPayeeLargeTransferRule>());
-    e.add(std::make_unique<StructuringRule>());
-    return e;
-}
-
-RuleEngine RuleEngine::fromConfig(const DetectorConfig& c) {
-    RuleEngine e;
-    e.add(std::make_unique<AmountSpikeRule>(c.amountThreshold, c.amountMinHistory));
-    e.add(std::make_unique<RepeatedTransactionRule>(c.repeatedWindow, c.repeatedMin));
-    e.add(std::make_unique<OddHourRule>(c.oddStart, c.oddEnd));
-    e.add(std::make_unique<VelocityRule>(c.velocityWindow, c.velocityMax));
-    e.add(std::make_unique<NewPayeeLargeTransferRule>(c.newPayeeMult, c.newPayeeMinHistory));
-    e.add(std::make_unique<StructuringRule>(c.structLimit, c.structBand, c.structMin, c.structWindow));
-    return e;
-}
-
-// Every rule's detect() is const and reads only the shared, immutable transaction list, so the rules run
-// concurrently (one std::async task each). Results are applied afterwards on one thread in a fixed order,
-// which keeps the output deterministic and avoids any lock on 'sig'.
-void RuleEngine::run(const std::vector<Transaction>& tx, std::vector<Signals>& sig) const {
-    std::vector<std::future<std::vector<char>>> jobs;
-    jobs.reserve(rules_.size());
-    for (const auto& r : rules_)
-        jobs.push_back(std::async(std::launch::async, [&r, &tx] { return r->detect(tx); }));   // dynamic dispatch on worker threads
-    for (size_t k = 0; k < rules_.size(); ++k) {
-        const std::vector<char> flags = jobs[k].get();                                          // join
-        for (size_t i = 0; i < flags.size(); ++i)
-            if (flags[i]) sig[i].hitRule(rules_[k]->name(), rules_[k]->weight());
-    }
+void RuleEngine::run(const std::vector<Transaction> &tx,
+                     std::vector<Signals> &signals) const {
+  for (const auto &rule : rules_) {
+    rule->apply(tx, signals);
+  }
 }
