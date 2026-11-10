@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpp:
+    name: C++ build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the detector
+        run: make -C cpp
+      - name: Unit tests
+        run: make -C cpp test
+      - name: Demo run (generate, detect, evaluate)
+        run: cd cpp && ./detector
+
+  python:
+    name: Python wrapper tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pandas
+        run: pip install pandas
+      - name: Run tests
+        run: python -m unittest discover tests -v

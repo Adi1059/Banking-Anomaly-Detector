@@ -3,12 +3,17 @@
 *.obj
 *.exe
 cpp/detector
-cpp/detector.exe
+cpp/test_core
+cpp/_t.sql
 
-# Generated data
+# Generated data (keep cpp/data/.gitkeep)
 cpp/data/*.csv
+cpp/data/*.json
+cpp/data/*.sql
 **/scored_*.csv
 **/demo_*.csv
+**/flagged_transactions.csv
+**/alerts.csv
 
 # IDE / OS
 .vscode/
@@ -17,7 +22,7 @@ cpp/data/*.csv
 .DS_Store
 Thumbs.db
 
-# Python (if any)
+# Python
 __pycache__/
 *.pyc
 .venv/
