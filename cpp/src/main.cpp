@@ -2,6 +2,7 @@
 //   detector generate [out.csv|json]              create synthetic labelled data
 //   detector detect [in] [out] [--config f.json]  score transactions, print report (CSV or JSON by extension)
 //   detector sql [in] [out.sql]                   export transactions + alerts as a MySQL script
+//   detector alerts [in] [topK] [out.csv]         publish alerts to observers: ranked console table + CSV log
 //   detector                                      generate + detect with default paths
 #include <chrono>
 #include <filesystem>
@@ -9,7 +10,9 @@
 #include <iomanip>
 #include <map>
 #include <queue>
+#include <memory>
 #include <string>
+#include "alert_publisher.hpp"
 #include "config.hpp"
 #include "eval.hpp"
 #include "generator.hpp"
@@ -117,6 +120,23 @@ static int doSql(const std::string& in, const std::string& out) {
     return 0;
 }
 
+// Observer pattern demo: one pipeline run, several independent alert consumers.
+static int doAlerts(const std::string& in, size_t topK, const std::string& outCsv) {
+    std::vector<Transaction> tx;
+    if (!loadAny(in, tx)) { std::cerr << "cannot read " << in << " (run 'detector generate' first)\n"; return 1; }
+    HybridScorer scorer;
+    const auto sig = runPipeline(tx, scorer);
+    ensureParent(outCsv);
+    auto log = std::make_shared<CsvAlertLog>(outCsv);
+    if (!log->ok()) { std::cerr << "cannot write " << outCsv << "\n"; return 1; }
+    AlertPublisher publisher;
+    publisher.subscribe(std::make_shared<ConsoleRankedTable>(topK));
+    publisher.subscribe(log);
+    const size_t n = publisher.publish(tx, sig, scorer.config().alert);
+    std::cout << "\n" << n << " alerts published to " << publisher.observers() << " observers (log: " << outCsv << ")\n";
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // optional "--config file.json" anywhere on the command line
     std::string cfgPath;
@@ -135,11 +155,14 @@ int main(int argc, char** argv) {
         return doDetect(argc > 2 ? argv[2] : "data/demo_transactions.csv", argc > 3 ? argv[3] : "data/scored_transactions.csv", cfgPath);
     if (cmd == "sql")
         return doSql(argc > 2 ? argv[2] : "data/demo_transactions.csv", argc > 3 ? argv[3] : "data/load_alerts.sql");
+    if (cmd == "alerts")
+        return doAlerts(argc > 2 ? argv[2] : "data/demo_transactions.csv", argc > 3 ? static_cast<size_t>(std::stoul(argv[3])) : 10,
+                        argc > 4 ? argv[4] : "data/alerts.csv");
     if (cmd == "demo") {
         if (int rc = doGenerate("data/demo_transactions.csv")) return rc;
         std::cout << "\n";
         return doDetect("data/demo_transactions.csv", "data/scored_transactions.csv", cfgPath);
     }
-    std::cerr << "usage: detector [generate [out] | detect [in] [out] [--config f.json] | sql [in] [out.sql] | demo]\n";
+    std::cerr << "usage: detector [generate [out] | detect [in] [out] [--config f.json] | sql [in] [out.sql] | alerts [in] [topK] [out.csv] | demo]\n";
     return 2;
 }

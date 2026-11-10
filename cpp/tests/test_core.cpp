@@ -1,8 +1,15 @@
 // Minimal self-contained unit tests (no framework needed).  Build & run:  make test
+#include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <cstdio>
+#include <iostream>
+#include <map>
+#include <random>
+#include <sstream>
+#include "alert_publisher.hpp"
 #include "config.hpp"
+#include "generator.hpp"
+#include "pipeline.hpp"
 #include "graph.hpp"
 #include "io.hpp"
 #include "unionfind.hpp"
@@ -174,9 +181,105 @@ static void testSqlExport() {
 
 static void testEngineSize() { CHECK(RuleEngine::withDefaultRules().size() == 6); }
 
+// ---- Phase-III additions: Observer publisher and edge cases ---------------------------------------------------
+struct RecordingObserver : AlertObserver {
+    std::vector<std::string> ids;
+    int finished = 0;
+    void onAlert(const Transaction& t, const Signals&) override { ids.push_back(t.id); }
+    void onFinish() override { ++finished; }
+};
+
+static void testPublisher() {
+    std::vector<Transaction> a(3);
+    std::vector<Signals> s(3);
+    for (int i = 0; i < 3; ++i) a[i].id = "TX" + std::to_string(i);
+    s[0].risk = 0.9; s[1].risk = 0.3; s[2].risk = 0.5;
+    auto r1 = std::make_shared<RecordingObserver>(), r2 = std::make_shared<RecordingObserver>();
+    AlertPublisher pub;
+    pub.subscribe(r1);
+    pub.subscribe(r2);
+    CHECK(pub.observers() == 2);
+    const size_t n = pub.publish(a, s, 0.5);
+    CHECK(n == 2);
+    CHECK(r1->ids.size() == 2 && r1->ids == r2->ids);          // every observer gets the same alerts
+    CHECK(r1->ids[0] == "TX0" && r1->ids[1] == "TX2");          // input order, threshold is inclusive
+    CHECK(r1->finished == 1 && r2->finished == 1);
+}
+
+static void testRankedTable() {
+    std::ostringstream os;
+    ConsoleRankedTable table(2, os);
+    for (int i = 0; i < 4; ++i) {
+        Transaction t; t.id = "TX" + std::to_string(i);
+        Signals s; s.risk = 0.5 + 0.1 * i; s.level = "MEDIUM";
+        table.onAlert(t, s);
+    }
+    table.onFinish();
+    const std::string out = os.str();
+    CHECK(out.find("TX3") != std::string::npos && out.find("TX2") != std::string::npos);   // the two riskiest are kept
+    CHECK(out.find("TX0") == std::string::npos && out.find("TX1") == std::string::npos);   // the rest were dropped by the heap
+    CHECK(out.find("TX3") < out.find("TX2"));                                              // best first
+}
+
+static void testCsvAlertLog() {
+    {
+        CsvAlertLog log("_alerts.csv");
+        CHECK(log.ok());
+        Transaction t = T("ACC1", "ACC2", "2026-03-05 14:07:09", 12.5);
+        t.id = "TX9";
+        Signals s; s.risk = 0.8; s.level = "HIGH"; s.reasons = {"amount spike", "say \"hi\""};
+        log.onAlert(t, s);
+        log.onFinish();
+        CHECK(log.written() == 1);
+    }
+    std::FILE* f = std::fopen("_alerts.csv", "r");
+    std::string text; char buf[512];
+    while (f && std::fgets(buf, sizeof buf, f)) text += buf;
+    if (f) std::fclose(f);
+    CHECK(text.find("TX9,ACC1,ACC2,2026-03-05 14:07:09,12.50,0.800,HIGH") != std::string::npos);
+    CHECK(text.find("\"\"hi\"\"") != std::string::npos);                                    // quotes escaped
+    std::remove("_alerts.csv");
+}
+
+static void testEmptyAndSingle() {
+    HybridScorer scorer;
+    const std::vector<Transaction> none;
+    CHECK(runPipeline(none, scorer).empty());                                                // empty input must not crash
+    std::vector<Transaction> one = {T("ACC1", "ACC2", "2026-03-05 14:07:09", 25.0)};
+    one[0].id = "TX1";
+    const auto sig = runPipeline(one, scorer);
+    CHECK(sig.size() == 1 && !scorer.isAlert(sig[0]));                                       // one ordinary payment is no alert
+}
+
+static void testIdenticalTimestamps() {
+    std::vector<Transaction> v;
+    for (int i = 0; i < 8; ++i) { v.push_back(T("ACC1", "ACC2", "2026-03-05 14:07:09", 50.0)); v.back().id = "TX" + std::to_string(i); }
+    const auto sig = runPipeline(v, HybridScorer());
+    CHECK(sig.size() == 8);
+    bool allFlagged = true;
+    for (const auto& s : sig) allFlagged = allFlagged && s.ruleHit;                          // velocity + repeated both fire
+    CHECK(allFlagged);
+}
+
+static void testInputOrderDoesNotMatter() {
+    const auto base = TransactionGenerator().generate();
+    auto shuffled = base;
+    std::mt19937 rng(7);
+    std::shuffle(shuffled.begin(), shuffled.end(), rng);
+    HybridScorer scorer;
+    const auto a = runPipeline(base, scorer), b = runPipeline(shuffled, scorer);
+    std::map<std::string, std::pair<bool, bool>> expected;                                   // id -> (rule hit, graph hit)
+    for (size_t i = 0; i < base.size(); ++i) expected[base[i].id] = {a[i].ruleHit, a[i].graphHit};
+    size_t different = 0;
+    for (size_t i = 0; i < shuffled.size(); ++i)
+        if (expected[shuffled[i].id] != std::make_pair(static_cast<bool>(b[i].ruleHit), static_cast<bool>(b[i].graphHit))) ++different;
+    CHECK(different == 0);                                                                   // detectors sort by timestamp themselves
+}
+
 int main() {
     testTime(); testAmountSpike(); testRepeated(); testOddHour(); testCycle(); testFan(); testScorer(); testForest();
     testVelocity(); testNewPayee(); testStructuring(); testUnionFind(); testClusters(); testJsonRoundTrip(); testConfig(); testSqlExport(); testEngineSize();
+    testPublisher(); testRankedTable(); testCsvAlertLog(); testEmptyAndSingle(); testIdenticalTimestamps(); testInputOrderDoesNotMatter();
     if (failures) { std::cerr << failures << " check(s) failed\n"; return 1; }
     std::cout << "All tests passed\n";
     return 0;
