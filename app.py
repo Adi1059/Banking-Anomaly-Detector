@@ -38,6 +38,11 @@ div[data-testid="stMetric"] * { color: #1b2740 !important; }
 section[data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e7ebf2; }
 section[data-testid="stSidebar"] * { color: #1b2740; }
 .small-muted { color: #68758a !important; font-size: 13px; }
+.stTabs [data-baseweb="tab"] { font-size: 16px; padding: 10px 18px; }
+.stTabs [data-baseweb="tab"] * { color: #1b2740 !important; }
+details summary, details summary * { color: #1b2740 !important; }
+div[data-testid="stDownloadButton"] button { background: #ffffff; border: 1px solid #cfdcf0; }
+div[data-testid="stDownloadButton"] button * { color: #1b2740 !important; }
 .badge { display:inline-block; padding:3px 12px; border-radius:999px; color:#fff !important;
          font-weight:600; font-size:13px; }
 .chip { display:inline-block; padding:4px 11px; margin:3px 6px 3px 0; border-radius:8px;
@@ -79,6 +84,8 @@ default_file = Path(__file__).parent / "cpp" / "data" / "scored_transactions.csv
 
 st.sidebar.header("Data")
 run_demo_clicked = st.sidebar.button("▶ Run the C++ detector on demo data", use_container_width=True)
+if st.session_state.pop("run_demo_requested", False):
+    run_demo_clicked = True
 uploaded = st.sidebar.file_uploader("Upload a transactions CSV (raw or already scored)", type=["csv"])
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Raw file (the detector scores it for you)**")
@@ -123,8 +130,11 @@ try:
         df = load_csv(default_file)
         source_label = "Project scored_transactions.csv"
     else:
-        st.info("No data yet. Click **Run the C++ detector on demo data** in the sidebar, "
-                "or upload a transactions CSV.")
+        st.info("No data yet. Start the C++ detector on generated demo transactions, "
+                "or upload your own CSV from the sidebar.")
+        if st.button("▶ Run the C++ detector on demo data", type="primary", key="demo_main"):
+            st.session_state["run_demo_requested"] = True
+            st.rerun()
         st.stop()
 except Exception as e:
     st.error(f"Could not read the data: {e}")
@@ -165,57 +175,181 @@ avg_risk = df["risk"].mean() if len(df) else 0
 
 # ---------------------------------------------------------------- KPIs
 st.caption(f"Data source: {source_label}  ·  {len(df):,} transactions loaded")
-m1, m2, m3, m4 = st.columns(4)
+alert_rate = len(alerts) / len(df) * 100 if len(df) else 0
+m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Total transactions", f"{len(df):,}")
 m2.metric("Alerts detected", f"{len(alerts):,}", help="Medium, High and Critical")
-m3.metric("High / critical risk", f"{len(high_risk):,}")
-m4.metric("Average risk score", f"{avg_risk:.2f}")
+m3.metric("Alert rate", f"{alert_rate:.1f}%", help="Share of transactions that raised an alert")
+m4.metric("High / critical risk", f"{len(high_risk):,}")
+m5.metric("Average risk score", f"{avg_risk:.2f}")
 
-# ---------------------------------------------------------------- charts
-st.markdown("### Detection overview")
-left, right = st.columns([1, 1])
+tab_overview, tab_explorer, tab_details = st.tabs(["📊 Overview", "🔎 Explorer", "🚨 Alert details"])
 
-with left:
-    counts = (df["level"].value_counts().reindex(LEVEL_ORDER, fill_value=0)
-              .rename_axis("Risk level").reset_index(name="Transactions"))
-    fig = px.bar(counts, x="Risk level", y="Transactions", color="Risk level",
-                 color_discrete_map=LEVEL_COLORS, text="Transactions",
-                 title="Transactions by risk level")
-    fig.update_traces(textposition="outside")
-    fig.update_layout(showlegend=False)
-    st.plotly_chart(style_fig(fig), width="stretch", theme=None)
+# ---------------------------------------------------------------- overview tab
+with tab_overview:
+    left, right = st.columns(2)
 
-with right:
-    flagged = df[df["level"] != "NONE"]
-    if len(flagged):
-        exploded = flagged["reason_list"].explode().dropna()
-        reason_counts = (exploded.map(pretty).value_counts().head(10)
-                         .rename_axis("Detection reason").reset_index(name="Count"))
+    with left:
+        counts = (df["level"].value_counts().reindex(LEVEL_ORDER, fill_value=0)
+                  .rename_axis("Risk level").reset_index(name="Transactions"))
+        fig = px.bar(counts, x="Risk level", y="Transactions", color="Risk level",
+                     color_discrete_map=LEVEL_COLORS, text="Transactions",
+                     title="Transactions by risk level")
+        fig.update_traces(textposition="outside")
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(style_fig(fig), width="stretch", theme=None)
+
+    with right:
+        flagged = df[df["level"] != "NONE"]
+        if len(flagged):
+            exploded = flagged["reason_list"].explode().dropna()
+            reason_counts = (exploded.map(pretty).value_counts().head(10)
+                             .rename_axis("Detection reason").reset_index(name="Count"))
+        else:
+            reason_counts = pd.DataFrame({"Detection reason": ["No flagged transactions"], "Count": [0]})
+        fig2 = px.bar(reason_counts, x="Count", y="Detection reason", orientation="h",
+                      color_discrete_sequence=["#2876b8"], text="Count",
+                      title="Most common detection reasons (flagged transactions)")
+        fig2.update_layout(yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(style_fig(fig2), width="stretch", theme=None)
+
+    left2, right2 = st.columns(2)
+
+    with left2:
+        timed = alerts.dropna(subset=["time"])
+        if len(timed):
+            per_day = (timed.groupby(timed["time"].dt.date).size()
+                       .rename_axis("Date").reset_index(name="Alerts"))
+            fig3 = px.bar(per_day, x="Date", y="Alerts", color_discrete_sequence=["#e05252"],
+                          title="Alerts per day")
+            st.plotly_chart(style_fig(fig3), width="stretch", theme=None)
+        else:
+            st.info("No timestamps in this file, so the alerts-per-day chart is not available.")
+
+    with right2:
+        if len(alerts):
+            top_accounts = (alerts.groupby("sender")
+                            .agg(Alerts=("id", "count"), Highest_risk=("risk", "max"))
+                            .sort_values(["Alerts", "Highest_risk"], ascending=False).head(10)
+                            .rename_axis("Sender account").reset_index())
+            fig4 = px.bar(top_accounts, x="Alerts", y="Sender account", orientation="h",
+                          color_discrete_sequence=["#8b1e3f"], text="Alerts",
+                          title="Accounts with the most alerts")
+            fig4.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(style_fig(fig4), width="stretch", theme=None)
+        else:
+            st.info("No alerts, so there are no accounts to rank.")
+
+    positive = df[df["amount"] > 0]
+    if len(positive):
+        fig5 = px.scatter(positive, x="amount", y="risk", color="level", log_x=True,
+                          color_discrete_map=LEVEL_COLORS, category_orders={"level": LEVEL_ORDER},
+                          hover_data=["id", "sender", "receiver"], opacity=0.7,
+                          labels={"amount": "Amount (₹, log scale)", "risk": "Risk score", "level": "Level"},
+                          title="Amount vs risk score (each dot is one transaction)")
+        st.plotly_chart(style_fig(fig5), width="stretch", theme=None)
+
+# ---------------------------------------------------------------- explorer tab
+with tab_explorer:
+    c1, c2, c3 = st.columns([1.3, 1, 1])
+    with c1:
+        search = st.text_input("Search transaction / account", placeholder="e.g. TX000123 or ACC045")
+    with c2:
+        present = [l for l in LEVEL_ORDER if l in set(df["level"])]
+        extra = sorted(set(df["level"]) - set(LEVEL_ORDER))
+        chosen_level = st.selectbox("Risk level", ["All"] + present + extra)
+    with c3:
+        min_risk = st.slider("Minimum risk score", 0.0, 1.0, 0.0, 0.05)
+
+    filtered = df
+    if search:
+        s = search.strip()
+        mask = (filtered["id"].astype(str).str.contains(s, case=False, na=False, regex=False)
+                | filtered["sender"].astype(str).str.contains(s, case=False, na=False, regex=False)
+                | filtered["receiver"].astype(str).str.contains(s, case=False, na=False, regex=False))
+        filtered = filtered[mask]
+    if chosen_level != "All":
+        filtered = filtered[filtered["level"] == chosen_level]
+    filtered = filtered[filtered["risk"] >= min_risk].sort_values("risk", ascending=False)
+
+    info_col, download_col = st.columns([3, 1])
+    info_col.caption(f"Showing {len(filtered):,} of {len(df):,} transactions")
+    table = filtered[["id", "sender", "receiver", "amount", "time", "risk", "level", "reasons_text"]].rename(
+        columns={"id": "ID", "sender": "Sender", "receiver": "Receiver", "amount": "Amount (₹)",
+                 "time": "Time (UTC)", "risk": "Risk", "level": "Level", "reasons_text": "Reasons"})
+    if df["time"].isna().all():
+        table = table.drop(columns=["Time (UTC)"])
+    download_col.download_button("⬇ Download as CSV", table.to_csv(index=False).encode("utf-8"),
+                                 file_name="filtered_transactions.csv", mime="text/csv",
+                                 use_container_width=True, disabled=table.empty)
+    st.dataframe(
+        table, width="stretch", hide_index=True, height=480,
+        column_config={
+            "Amount (₹)": st.column_config.NumberColumn(format="%.2f"),
+            "Risk": st.column_config.ProgressColumn(min_value=0.0, max_value=1.0, format="%.2f"),
+            "Time (UTC)": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm"),
+        },
+    )
+
+# ---------------------------------------------------------------- alert details tab
+with tab_details:
+    if len(alerts):
+        ranked = alerts.sort_values("risk", ascending=False)
+        labels = {str(r.id): f"{r.id}  ·  {r.level}  ·  risk {r.risk:.2f}" for r in ranked.itertuples()}
+        selected_id = st.selectbox("Select an alert to inspect", list(labels), format_func=labels.get,
+                                   help=f"{len(ranked):,} alerts, highest risk first")
+        row = df[df["id"].astype(str) == selected_id].iloc[0]
+
+        a, b, c = st.columns(3)
+        a.metric("Transaction amount", f"₹{row['amount']:,.2f}")
+        b.metric("Risk score", f"{row['risk']:.2f}")
+        with c:
+            color = LEVEL_COLORS.get(row["level"], "#9aa6b2")
+            st.markdown('<div style="font-size:14px;color:#68758a;margin-top:6px">Risk level</div>'
+                        f'<span class="badge" style="background:{color}">{row["level"]}</span>',
+                        unsafe_allow_html=True)
+
+        when = f"  ·  **Time:** {row['time']:%d %b %Y, %H:%M} UTC" if pd.notna(row["time"]) else ""
+        st.markdown(f"**Transaction:** `{row['id']}`  ·  **Sender:** `{row['sender']}`  →  "
+                    f"**Receiver:** `{row['receiver']}`{when}")
+
+        st.markdown("**Why it was flagged:**")
+        if row["reason_list"]:
+            st.markdown("".join(f'<span class="chip">{pretty(r)}</span>' for r in row["reason_list"]),
+                        unsafe_allow_html=True)
+        else:
+            st.caption("No textual reason was recorded for this alert.")
+
+        st.markdown("**Other transactions from the same sender** (newest first)")
+        same_sender = df[df["sender"] == row["sender"]]
+        if same_sender["time"].notna().any():
+            same_sender = same_sender.sort_values("time", ascending=False)
+        st.dataframe(
+            same_sender[["id", "receiver", "amount", "risk", "level"]].head(15)
+            .rename(columns={"id": "ID", "receiver": "Receiver", "amount": "Amount (₹)",
+                             "risk": "Risk", "level": "Level"}),
+            width="stretch", hide_index=True,
+            column_config={"Amount (₹)": st.column_config.NumberColumn(format="%.2f"),
+                           "Risk": st.column_config.ProgressColumn(min_value=0.0, max_value=1.0, format="%.2f")},
+        )
     else:
-        reason_counts = pd.DataFrame({"Detection reason": ["No flagged transactions"], "Count": [0]})
-    fig2 = px.bar(reason_counts, x="Count", y="Detection reason", orientation="h",
-                  color_discrete_sequence=["#2876b8"], text="Count",
-                  title="Most common detection reasons (flagged transactions)")
-    fig2.update_layout(yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(style_fig(fig2), width="stretch", theme=None)
+        st.info("No medium-or-higher risk alerts are present in the loaded file.")
 
-# ---------------------------------------------------------------- explorer
-st.markdown("### Transaction explorer")
-c1, c2, c3 = st.columns([1.3, 1, 1])
-with c1:
-    search = st.text_input("Search transaction / account", placeholder="e.g. TX000123 or ACC045")
-with c2:
-    present = [l for l in LEVEL_ORDER if l in set(df["level"])]
-    extra = sorted(set(df["level"]) - set(LEVEL_ORDER))
-    chosen_level = st.selectbox("Risk level", ["All"] + present + extra)
-with c3:
-    min_risk = st.slider("Minimum risk score", 0.0, 1.0, 0.0, 0.05)
+with st.expander("How the risk score is calculated"):
+    st.markdown(
+        "Three independent detectors each give a score between 0 and 1:\n\n"
+        "* **Rules** - amount spike, repeated payment, odd hour, velocity, new payee, structuring.\n"
+        "* **Graph** - money cycles, fan-in / fan-out and linked account clusters.\n"
+        "* **Isolation Forest** - a machine-learning outlier score.\n\n"
+        "They are combined with a noisy-OR formula, so one strong signal is enough to raise an alert, "
+        "and several weak signals add up: `risk = 1 - (1 - 0.9·rule)(1 - 0.9·graph)(1 - 0.8·ml)`. "
+        "A transaction with risk of at least 0.50 is an alert."
+    )
 
-filtered = df
-if search:
-    s = search.strip()
-    mask = (filtered["id"].astype(str).str.contains(s, case=False, na=False, regex=False)
-            | filtered["sender"].astype(str).str.contains(s, case=False, na=False, regex=False)
+st.markdown("---")
+st.markdown('<p class="small-muted">BankGuard · Academic prototype · Risk scores are decision-support '
+            'signals, not proof of fraud.</p>', unsafe_allow_html=True)
+| filtered["sender"].astype(str).str.contains(s, case=False, na=False, regex=False)
             | filtered["receiver"].astype(str).str.contains(s, case=False, na=False, regex=False))
     filtered = filtered[mask]
 if chosen_level != "All":
