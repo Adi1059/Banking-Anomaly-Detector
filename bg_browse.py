@@ -8,8 +8,11 @@ def browse(data, total):
     query = a.text_input("Search transaction or account", placeholder="Transaction ID / account")
     levels = b.multiselect("Risk level", ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"],
                            default=["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"])
-    min_score = c.slider("Minimum risk score", 0.0, 1.0, 0.0, 0.05)
-    view = data[data["level"].isin(levels) & (data["score"] >= min_score)].copy()
+min_score = c.slider(
+    "Minimum risk score",
+    0.0, 1.0, 0.0, 0.05,
+    key="browse_min_risk_score"
+)    view = data[data["level"].isin(levels) & (data["score"] >= min_score)].copy()
     if query.strip():
         term = query.strip().lower()
         mask = (
