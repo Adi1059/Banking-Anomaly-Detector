@@ -1,38 +1,31 @@
-"""BankGuard all-transactions browser."""
-import inspect
-
+"""Searchable transaction explorer."""
+import pandas as pd
 import streamlit as st
 
-from bg_theme import LEVELS, paint
-
-STRETCH = {"width": "stretch"} if "width" in inspect.signature(st.button).parameters else {"use_container_width": True}
-
-
 def browse(data, total):
-    f1, f2, f3 = st.columns([1.3, 1.3, 1])
-    query = f1.text_input("Search by transaction or account", placeholder="TX002816 or ACC0048")
-    chosen = f2.multiselect("Risk level", LEVELS, placeholder="All levels")
-    min_score = f3.slider("Minimum risk score", 0.0, 1.0, 0.0, 0.01)
-
-    view = data[data["score"] >= min_score]
-    if chosen:
-        view = view[view["level"].isin(chosen)]
+    st.markdown("### Transaction explorer")
+    a, b, c = st.columns([1.2, 1, 1])
+    query = a.text_input("Search transaction or account", placeholder="Transaction ID / account")
+    levels = b.multiselect("Risk level", ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"],
+                           default=["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"])
+    min_score = c.slider("Minimum risk score", 0.0, 1.0, 0.0, 0.05)
+    view = data[data["level"].isin(levels) & (data["score"] >= min_score)].copy()
     if query.strip():
-        q = query.strip()
-        hit = view[["id", "sender", "receiver"]].apply(lambda s: s.str.contains(q, case=False, regex=False))
-        view = view[hit.any(axis=1)]
+        term = query.strip().lower()
+        mask = (
+            view["id"].astype(str).str.lower().str.contains(term, na=False) |
+            view["sender"].astype(str).str.lower().str.contains(term, na=False) |
+            view["receiver"].astype(str).str.lower().str.contains(term, na=False)
+        )
+        view = view[mask]
     view = view.sort_values("score", ascending=False)
-
-    m1, m2 = st.columns([4, 1])
-    m1.markdown(f'<div class="note">Showing {len(view):,} of {total:,} transactions</div>', unsafe_allow_html=True)
-    m2.download_button("Download CSV", view.drop(columns="reason_list").to_csv(index=False).encode(),
-                       "bankguard_filtered.csv", "text/csv", **STRETCH)
-    table = view[["id", "sender", "receiver", "amount", "time", "score", "level", "reasons"]]
-    styler = table.style.map(paint, subset=["level"]) if hasattr(table.style, "map") else table.style.applymap(paint, subset=["level"])
-    st.dataframe(styler, hide_index=True, **STRETCH, height=520, column_config={
-        "id": "ID", "sender": "Sender", "receiver": "Receiver",
-        "amount": st.column_config.NumberColumn("Amount (\u20b9)", format="%.2f"),
-        "time": st.column_config.DatetimeColumn("Time", format="DD MMM YYYY, HH:mm"),
-        "score": st.column_config.ProgressColumn("Risk", min_value=0, max_value=1, format="%.2f"),
-        "level": st.column_config.TextColumn("Level", width="small"),
-        "reasons": st.column_config.TextColumn("Reasons", width="large")})
+    st.caption(f"{len(view):,} matching transactions out of {total:,}.")
+    display = view[["id", "sender", "receiver", "amount", "time", "score", "level", "reasons"]].copy()
+    st.dataframe(display, use_container_width=True, hide_index=True,
+                 column_config={
+                     "amount": st.column_config.NumberColumn("Amount (INR)", format="₹%.2f"),
+                     "score": st.column_config.ProgressColumn("Risk score", min_value=0, max_value=1, format="%.2f"),
+                     "time": st.column_config.DatetimeColumn("Timestamp", format="DD MMM YYYY, HH:mm")
+                 })
+    st.download_button("Download filtered transactions (CSV)", view.to_csv(index=False).encode("utf-8"),
+                       file_name="bankguard_transactions.csv", mime="text/csv")
