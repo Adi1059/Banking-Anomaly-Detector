@@ -6,6 +6,7 @@ LEVEL_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"]
 LEVEL_COLORS = {"CRITICAL": "#8b1e3f", "HIGH": "#e05252", "MEDIUM": "#e7a23b",
                 "LOW": "#4c83c3", "NONE": "#9aa6b2"}
 
+
 def _base(fig):
     fig.update_layout(
         template="plotly_white", paper_bgcolor="white", plot_bgcolor="white",
@@ -16,6 +17,7 @@ def _base(fig):
     fig.update_yaxes(gridcolor="#edf0f5", zerolinecolor="#edf0f5")
     return fig
 
+
 def risk_chart(data):
     counts = data["level"].value_counts().reindex(LEVEL_ORDER, fill_value=0).rename_axis("Risk level").reset_index(name="Transactions")
     fig = px.bar(counts, x="Risk level", y="Transactions", color="Risk level",
@@ -23,6 +25,7 @@ def risk_chart(data):
                  title="Transactions by risk level", text="Transactions")
     fig.update_traces(textposition="outside")
     return _base(fig)
+
 
 def reason_chart(data):
     exploded = data[["reason_list"]].explode("reason_list").dropna()
@@ -38,6 +41,7 @@ def reason_chart(data):
     fig.update_traces(marker_color="#5b2ee0", textposition="outside")
     return _base(fig)
 
+
 def account_chart(data):
     alerts = data[data["level"].isin(["CRITICAL", "HIGH", "MEDIUM"])]
     counts = alerts.groupby("sender").size().sort_values(ascending=False).head(10).sort_values().reset_index(name="Alerts")
@@ -49,6 +53,7 @@ def account_chart(data):
     fig = px.bar(counts, x="Alerts", y="sender", orientation="h", title="Accounts with the most alerts")
     fig.update_traces(marker_color="#e05252")
     return _base(fig)
+
 
 def daily_chart(data):
     valid = data.dropna(subset=["time"]).copy()
