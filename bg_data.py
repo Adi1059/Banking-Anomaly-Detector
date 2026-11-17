@@ -1,4 +1,5 @@
 """BankGuard data loading, validation, and C++ detector integration."""
+
 import io
 import re
 import pandas as pd
@@ -15,6 +16,7 @@ ALIASES = {
     "level": ["risk_level", "level", "severity", "risk_band"],
     "reasons": ["reasons", "detection_reasons", "reason", "flags", "detections"],
 }
+
 
 def read_csv(data):
     return pd.read_csv(io.BytesIO(data))
